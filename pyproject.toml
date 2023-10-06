@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "store_monitoring_system"
+version = "1.0.0"
+license = ""
+description = ""
+readme = "README.md"
+authors = ["Developer <cu.18bcs2174@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+starlette = "0.31.1"
+uvicorn = "0.23.2"
+pydantic = "2.4.2"
+
+
+[tool.poetry.dev-dependencies]
+flake8 = "6.1.0"
+pylint = "3.0.1"
+mypy = "1.5.1"
+
+
+[build-system]
+requires = ["poetry>=1.0.0"]
+build-backend = "poetry.masonry.api"
