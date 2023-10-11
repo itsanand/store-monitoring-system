@@ -151,11 +151,11 @@ def _calculate_interpolated_uptime_downtime(
     max_timestamp = max_timestamp.replace(
         tzinfo=store_timezone
     )
-    for index in range(len(store_data.timestamp_array) - 1):
+    for index in range(1, len(store_data.timestamp_array)):
         curr_stamp: datetime = store_data.timestamp_array[index].replace(
             tzinfo=store_timezone
         )
-        next_stamp: datetime = store_data.timestamp_array[index + 1].replace(
+        prev_stamp: datetime = store_data.timestamp_array[index - 1].replace(
             tzinfo=store_timezone
         )
         curr_status: str = store_data.status_array[index]
@@ -169,7 +169,7 @@ def _calculate_interpolated_uptime_downtime(
             or curr_stamp.time() < buisness_hours[1]
         ):
             continue
-        interval: float = (next_stamp - curr_stamp).total_seconds()
+        interval: float = (prev_stamp- curr_stamp).total_seconds()
         if (max_timestamp - curr_stamp) <= timedelta(hours=1):
             if curr_status != _ACTIVE:
                 store_specific_report["uptime_last_hour"] += interval
