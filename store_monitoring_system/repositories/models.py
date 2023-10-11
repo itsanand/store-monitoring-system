@@ -1,10 +1,19 @@
-"""Handles database connection and tables"""
+"""Handles database connection and tables and
+handles Initial setup Service"""
+import asyncio
 import psycopg2
-from psycopg2.extensions import connection, cursor as Cursor
+from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.engine.base import Engine
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Time
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Time,
+    BigInteger,
+    create_engine,
+)
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.exc import ProgrammingError
 import store_monitoring_system.settings as Config
 from store_monitoring_system.logger import LOGGER
 
@@ -14,13 +23,22 @@ BASE = declarative_base()
 
 
 # Define SQLAlchemy Models
+class StoreReport(BASE):
+    """Model to store report of each store"""
+
+    __tablename__ = "store_report"
+    id = Column(String, primary_key=True)
+    report_data = Column(JSON, nullable=True)
+    status = Column(String, default="Running")
+
+
 class StoreStatus(BASE):
     """Model to store status of each Store"""
 
     __tablename__ = "store_status"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    store_id = Column(String)
-    timestamp_utc = Column(DateTime(timezone=True))
+    store_id = Column(BigInteger)
+    timestamp_utc = Column(DateTime(timezone=True), index=True)
     status = Column(String)
 
 
@@ -29,7 +47,7 @@ class BusinessHours(BASE):
 
     __tablename__ = "business_hours"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    store_id = Column(String)
+    store_id = Column(BigInteger)
     day_of_week = Column(Integer)
     start_time_local = Column(Time)
     end_time_local = Column(Time)
@@ -39,65 +57,74 @@ class Timezone(BASE):
     """Model to store timezone of stores"""
 
     __tablename__ = "timezones"
-    store_id = Column(String, primary_key=True)
+    store_id = Column(BigInteger, primary_key=True)
     timezone_str = Column(String)
 
 
-def _load_csv_into_db(
-    file_path: str, table_name: str, conn: connection, cursor: Cursor, columns: tuple
-) -> None:
-    """Method will load CSV file data into respective
-    table using psycopg2 export_expert method
+class InitialSetup:
+    """InitialSetup class to handle hourly polling
+    and initial data setup to tables
     """
 
-    column_names: str = ",".join(columns)
-    copy_sql: str = f"""COPY {table_name}({column_names}) FROM stdin WITH CSV HEADER
-        DELIMITER as ','
-    """
-    with open(file_path, "r", encoding="utf-8") as file:
-        cursor.copy_expert(sql=copy_sql, file=file)
-        conn.commit()
-
-
-def _create_tables_if_not_exist():
-    """Create all tables and add data from ec=ach csv file
-    NOTE: Instead of reading from CSV file diretly this part
-    can be moved to polling service.
-    """
-    try:
-        BASE.metadata.create_all(bind=DB_ENGINE)
-        conn: connection = psycopg2.connect(Config.DATABASE_URL)
-        cursor: Cursor = conn.cursor()
-        _load_csv_into_db(
-            "file_path",
-            Timezone.__tablename__,
-            conn,
-            cursor,
-            ("store_id", "timezone_str"),
+    def __init__(self) -> None:
+        self.conn = psycopg2.connect(
+            host=Config.DB_HOST,
+            dbname=Config.DB_NAME,
+            user=Config.DB_USER,
+            password=Config.DB_PASSWORD,
         )
-        _load_csv_into_db(
-            "file_path",
-            BusinessHours.__tablename__,
-            conn,
-            cursor,
-            ("store_id", "day_of_week", "start_time_local", "end_time_local"),
-        )
-        _load_csv_into_db(
-            "file_path",
+        self.cursor = self.conn.cursor()
+
+    async def _load_csv_into_db(
+        self, file_name: str, table_name: str, columns: tuple
+    ) -> None:
+        """Method will load CSV file data into respective
+        table using psycopg2 export_expert method
+        """
+        try:
+            column_names: str = ",".join(columns)
+            copy_sql: str = f"""COPY {table_name}({column_names})
+                FROM stdin WITH CSV HEADER
+                DELIMITER as ','
+            """
+            with open(file_name, "r", encoding="utf-8") as file:
+                self.cursor.copy_expert(sql=copy_sql, file=file)
+                self.conn.commit()
+        except psycopg2.errors.UniqueViolation as error:
+            LOGGER.error("Store already exist in the database, %s", error)
+
+    async def load_initial_data(self) -> None:
+        """Loads initial data
+        1. Adding StoreStatus to the table from CSV file
+        2. Adding BuisnessHours to the table from CSV file
+        3. Adding TimeZone to the table from CSV file
+        """
+        await self._load_csv_into_db(
+            r"C:\Users\admin\Desktop\LoopAI\static\store status.csv",
             StoreStatus.__tablename__,
-            conn,
-            cursor,
             ("store_id", "status", "timestamp_utc"),
         )
-        LOGGER.info("tables created and data added from CSV")
-    except ProgrammingError:
-        LOGGER.warning("Tables already exist")
-    except psycopg2.IntegrityError as error:
-        LOGGER.warning("Error while adding record into DB %s", str(error))
-    finally:
-        cursor.close()
-        conn.close()
+        LOGGER.info("Store Status added Successfully")
+
+        await self._load_csv_into_db(
+            r"C:\Users\admin\Desktop\LoopAI\static\Menu hours.csv",
+            BusinessHours.__tablename__,
+            ("store_id", "day_of_week", "start_time_local", "end_time_local"),
+        )
+        LOGGER.info("Store Buisness Hours added Successfully")
+
+        await self._load_csv_into_db(
+            r"C:\Users\admin\Desktop\LoopAI\static\timezome.csv",
+            Timezone.__tablename__,
+            ("store_id", "timezone_str"),
+        )
+        LOGGER.info("Store Buisness Hours added Successfully")
 
 
 if __name__ == "__main__":
-    _create_tables_if_not_exist()
+    BASE.metadata.drop_all(DB_ENGINE)
+    BASE.metadata.create_all(DB_ENGINE)
+    inital_setup: InitialSetup = InitialSetup()
+    asyncio.run(inital_setup.load_initial_data())
+    inital_setup.cursor.close()
+    inital_setup.conn.close()
